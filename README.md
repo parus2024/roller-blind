@@ -179,7 +179,7 @@ cd roller-blind
 
 - [Дисплей в действии](screenshot1.png)
 - [Интеграция с HA](screenshot2.png)
-- [Схема соединений](roller-blind/roller-blind04_10_2025.JPG)
+- [Схема соединений](roller-blind04_10_2025.JPG)
 
 ---
 
