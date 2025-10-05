@@ -191,9 +191,13 @@ cd roller-blind
 
 *(Добавьте сюда скриншоты дисплея, HA дашборда или видео демонстрации)*
 
-- [Дисплей в действии](screenshot1.png)
-- [Интеграция с HA](screenshot2.png)
+- [внешний вид](roller-blind-img/roller-blind-v2_1.jpg)
+- [внешний вид](roller-blind-img/roller-blind-v2_1.jpg)
+- [Вид на окне](roller-blind-img/window.jpg)
 - [Схема соединений](roller-blind04_10_2025.JPG)
+- [Видео#1 YOUTUBE](https://youtu.be/TDQovWRaWWA)
+- [Видео#2 YOUTUBE](https://youtu.be/KZsbmizrDjA)
+- [Файлы для печати](roller-blind-3d)
 
 ---
 
