@@ -1,5 +1,5 @@
 substitutions:
-  name: smart-roller-blind2
+  name: smart-roller-blind
   friendly_name: Smart Roller Blind
   friendly_name_short: smart_roller_blind
   version: "05.10.2025"
