@@ -1,4 +1,4 @@
-# Smart-Roller-Blind: Умная Автоматизированная Роллета на ESPHome
+# Smart-Roller-Blind: Умная Автоматизированная Автономная Роллета на ESPHome
 
 ![ESPHome Logo](roller-blind-img/esphome1.png) ![Home Assistant Logo](https://avatars.githubusercontent.com/u/13844975?s=200&v=4)
 <p align="center">
