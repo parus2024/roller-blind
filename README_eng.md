@@ -1,4 +1,4 @@
-# Smart-Roller-Blind: Smart Automated Roller Blind on ESPHome
+# Smart-Roller-Blind: Smart Automated Standalone Roller Blind on ESPHome
 
 ![ESPHome Logo](roller-blind-img/esphome1.png) ![Home Assistant Logo](https://avatars.githubusercontent.com/u/13844975?s=200&v=4)
 <p align="center">
