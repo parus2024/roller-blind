@@ -1,0 +1,1379 @@
+substitutions:
+  name: smart-roller-blind2
+  friendly_name: Smart Roller Blind
+  friendly_name_short: smart_roller_blind
+  version: "05.10.2025"
+  device_ip: 192.168.0.214
+  reboot_timeout: 0s
+  pin_led: GPIO8
+  sda1: GPIO9
+  scl1: GPIO10
+  mystepper: my_stepper
+  pin_a: GPIO3 # Шаг
+  pin_b: GPIO4 # Направление
+  pin_c: GPIO2 # Sleep/reset
+  max_speed: 600 steps/s
+  run_duration: 120s
+  sleep_duration: 30s
+
+<<: !include attach/common/esphome.yaml 
+<<: !include attach/common/esp/esp32_c3_idf.yaml
+<<: !include attach/common/logger/debug.yaml
+<<: !include attach/common/api.yaml
+<<: !include attach/common/ota.yaml
+<<: !include attach/common/wifi.yaml
+<<: !include attach/common/web/web_server3.yaml
+<<: !include attach/common/bus/i2c_a.yaml
+<<: !include attach/common/sun.yaml
+packages:
+  common: !include attach/packages/standart.yaml
+globals:
+  - id: time_received # Флаг получения времени от НА
+    type: bool
+    initial_value: "false"
+  - id: time_received_homeassistant # Флаг получения времени от homeassistant
+    type: bool
+    initial_value: "false"
+  - id: next_sleep_duration # Переменная продолжительности сна перед засыпанием в любой момент времени
+    type: uint64_t
+    initial_value: '0'
+  - id: bootCount # Переменная подсчета количества загрузок\выхода из сна
+    type: int
+    restore_value: yes
+    initial_value: '0'
+  - id: bootHistory # Переменная причин загрузок\выхода из сна
+    type: std::string
+    restore_value: yes
+    initial_value: '""'
+  - id: last_wakeup_reason # Переменная причины последней загрузки\выхода из сна
+    type: int
+    initial_value: '0' # Изначально 0 (неопределённая причина)
+  - id: ${mystepper}_global # Целое число для хранения позиции шагового двигателя на случай перезагрузки
+    type: unsigned long
+    restore_value: True
+    initial_value: '0'
+  - id: openclosed # Глобальная переменная, указывает состояние роллеты (1 = открыто, 0 = закрыто).
+    type: bool
+    restore_value: True
+    initial_value: '0'
+  - id: last_direction
+    type: int
+    initial_value: '0' # 0 = открытие, 1 = закрытие (начнём с открытия)
+  - id: endstop # Переменная для хранения конечной точки  (полностью открыто).(насколько далеко двигаться шаговому двигателю)
+    type: unsigned long
+    restore_value: True
+    initial_value: '1000'
+  - id: settingmode # Глобальная переменная, указывает этап настройки (1 = закрытие, 2 = открытие, 3 = завершение).
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: countdown # Обратный отсчет до сна
+    type: int
+    initial_value: '0'
+  - id: wifi_enabled
+    type: bool
+    restore_value: yes
+    initial_value: 'true' # Начальное значение 
+
+  - id: motor_running
+    type: bool
+    initial_value: 'false'
+  - id: safety_triggered
+    type: bool
+    initial_value: 'false'
+  - id: last_movement_start # Можно переиспользовать для start_time
+    type: uint32_t # Изменил на uint32_t для millis()
+    initial_value: '0'
+font:
+  - file: "fonts/arial.ttf"
+    id: arial_12
+    size: 12
+    glyphs: |-
+      |#~*<>!'"%/()+=,-_.:°0123456789АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЬЫЪЭЮЯABCDEFGHIJKLMNOPQRSTUVWXYZ абвгдеёжзийклмнопрстуфхцчшщьыъэюяabcdefghijklmnopqrstuvwxyz
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    i2c_id: bus_a
+    id: my_display
+    pages:
+      - id: main_page
+        lambda: |-
+          it.print(0, 0, id(arial_12), TextAlign::TOP_LEFT, "Кнопка х3 - СПРАВКА");
+          // Текущее время ds1307
+          auto time = id(ds1307_time).now(); // ESPTime
+          it.printf(0, 14, id(arial_12), TextAlign::TOP_LEFT, " RTC:%02d:%02d", id(ds1307_time).now().hour, id(ds1307_time).now().minute);
+          // Индикатор режима: A (auto) или M (manual)
+          if (id(auto_rolls).state) {
+            it.print(68, 14, id(arial_12), TextAlign::TOP_LEFT, "A");
+          } else {
+            it.print(68, 14, id(arial_12), TextAlign::TOP_LEFT, "M");
+          }
+          // Причина пробуждения из text_sensor
+          std::string wakeup_text = id(wakeup_cause_text).state; // Читаем напрямую из сенсора
+          it.printf(80, 14, id(arial_12), TextAlign::TOP_LEFT, wakeup_text.c_str());
+
+          // режим солнце/время
+          if (!id(sun_time).state) {
+          it.print(40, 23, id(arial_12), TextAlign::TOP_LEFT, "режим: солнце");
+          }
+          else {
+          it.print(40, 23, id(arial_12), TextAlign::TOP_LEFT, "режим: время");
+          }
+          it.printf(0, 24, id(arial_12), TextAlign::TOP_LEFT, "%.2fV", id(battery_voltage).state);
+          // положение шторы
+          float pos_norm = float(id(${mystepper}_global)) / float(id(endstop));
+          if (id(${mystepper}).current_position == 0) {
+            it.printf(2, 33, id(arial_12), TextAlign::TOP_LEFT, "штора: закрыта");
+          } else {
+            it.printf(2, 33, id(arial_12), TextAlign::TOP_LEFT, "штора: открыто %.0f%%", pos_norm * 100);
+          }
+          it.print(2, 43, id(arial_12), TextAlign::TOP_LEFT, "Сон на");
+
+          it.printf(46, 43, id(arial_12), TextAlign::TOP_LEFT, id(next_sleep_duration_sensor).state.c_str());
+          if (!id(sleep_work).state) {
+          it.printf(98, 43, id(arial_12), "(%2d)", id(countdown));
+          }else {
+            it.print(96, 43, id(arial_12), "(OFF)");
+          }
+          // Отображаем состояние глобальной переменной wifi_enabled
+          if (id(wifi_enabled)) {
+            it.printf(0, 53, id(arial_12), TextAlign::TOP_LEFT, "wifi: true|");
+          } else {
+            it.printf(0, 53, id(arial_12), TextAlign::TOP_LEFT, "wifi: false|");
+          }
+          // Статус Wi-Fi
+          std::string wifi_str = wifi::global_wifi_component->is_connected() ? "conn" : "disc";
+          it.printf(53, 53, id(arial_12), TextAlign::TOP_LEFT, "%s'", wifi_str.c_str());
+          // Отображаем uptime
+          it.printf(82, 53, id(arial_12), TextAlign::TOP_LEFT, "upt:%s", id(uptime_human).state.c_str());
+      - id: learning
+        lambda: |-
+          it.print(2, 0, id(arial_12), TextAlign::TOP_LEFT, "ДЛЯ ОБУЧЕНИЯ ШТОРЫ");
+          it.print(2, 14, id(arial_12), TextAlign::TOP_LEFT, "Для обучения шторы");
+          it.print(2, 26, id(arial_12), TextAlign::TOP_LEFT, "1) кнопка 6-10сек");
+          it.print(2, 40, id(arial_12), TextAlign::TOP_LEFT, "2) кнопка  внизу");
+          it.print(2, 52, id(arial_12), TextAlign::TOP_LEFT, "3) кнопка вверху");
+      - id: info
+        lambda: |-
+          it.print(2, 0, id(arial_12), TextAlign::TOP_LEFT, "х1 - ДВИЖЕНИЕ/СТОП");
+          it.print(2, 14, id(arial_12), TextAlign::TOP_LEFT, "х2 - СОН / НЕТ");
+          it.print(2, 26, id(arial_12), TextAlign::TOP_LEFT, "х4 - ОБУЧЕНИЕ");
+          it.print(2, 40, id(arial_12), TextAlign::TOP_LEFT, "x5 - ВКЛ/ВЫКЛ WiFi");
+          it.print(2, 52, id(arial_12), TextAlign::TOP_LEFT, "x6 - СТРАНИЦЫ");  
+      - id: start_learning
+        lambda: |-
+          it.print(2, 0, id(arial_12), TextAlign::TOP_LEFT, "РЕЖИМ ОБУЧЕНИЯ");
+          it.print(2, 14, id(arial_12), TextAlign::TOP_LEFT, "НАЖМИТЕ");
+          it.print(2, 30, id(arial_12), TextAlign::TOP_LEFT, "КНОПКУ");
+          it.print(2, 45, id(arial_12), TextAlign::TOP_LEFT, "ДЛЯ СТАРТА");
+      - id: open_setting
+        lambda: |-
+          it.print(2, 0, id(arial_12), TextAlign::TOP_LEFT, "РЕЖИМ ОБУЧЕНИЯ");
+          it.print(2, 14, id(arial_12), TextAlign::TOP_LEFT, "Роллета опускается");
+          it.print(2, 30, id(arial_12), TextAlign::TOP_LEFT, "НАЖМИТЕ КНОПКУ");
+          it.print(2, 45, id(arial_12), TextAlign::TOP_LEFT, "в НИЖНЕЙ точке");
+      - id: close_setting
+        lambda: |-
+          it.print(2, 0, id(arial_12), TextAlign::TOP_LEFT, "РЕЖИМ ОБУЧЕНИЯ");
+          it.print(2, 14, id(arial_12), TextAlign::TOP_LEFT, "Роллета поднимается");
+          it.print(2, 30, id(arial_12), TextAlign::TOP_LEFT, "НАЖМИТЕ КНОПКУ");
+          it.print(2, 45, id(arial_12), TextAlign::TOP_LEFT, "в ВЕРХНЕЙ точке");
+      - id: finish
+        lambda: |-
+          it.print(2, 0, id(arial_12), TextAlign::TOP_LEFT, "РЕЖИМ ОБУЧЕНИЯ");
+          it.print(10, 14, id(arial_12), TextAlign::TOP_LEFT, "ОБУЧЕНИЕ");
+          it.print(10, 30, id(arial_12), TextAlign::TOP_LEFT, "УСПЕШНО");
+          it.print(10, 45, id(arial_12), TextAlign::TOP_LEFT, "ЗАВЕРШЕНО");
+      - id: sleeping
+        lambda: |-
+          it.print(2, 0, id(arial_12), TextAlign::TOP_LEFT, "PARUS SMART HOME");
+          it.print(2, 20, id(arial_12), TextAlign::TOP_LEFT, "СПОКОЙНОГО СНА!");
+          it.print(2, 43, id(arial_12), TextAlign::TOP_LEFT, "СОН НА");
+          it.printf(52, 43, id(arial_12), TextAlign::TOP_LEFT, id(next_sleep_duration_sensor).state.c_str());
+      - id: safety_alarm
+        lambda: |-
+          it.print(2, 0, id(arial_12), TextAlign::TOP_LEFT, "В  Н  И  М  А  Н  И  Е");
+          it.print(0, 14, id(arial_12), TextAlign::TOP_LEFT, "АВАРИЯ по току");
+          it.print(0, 26, id(arial_12), TextAlign::TOP_LEFT, "или превышен тайм-аут ");
+          it.print(0, 40, id(arial_12), TextAlign::TOP_LEFT, "Вкл/логи в интерфейсе");
+          it.print(0, 52, id(arial_12), TextAlign::TOP_LEFT, "Нажмите 3-5сек для reset");
+
+sensor:
+  - platform: sun
+    name: Sun Elevation
+    type: elevation
+  - platform: sun
+    name: Sun Azimuth
+    type: azimuth
+  - platform: template
+    name: "Seconds until sunrise"
+    id: seconds_until_sunrise
+    icon: mdi:weather-sunset-up
+    update_interval: 30s
+    lambda: |-
+      auto now = id(ds1307_time).now();
+      ESP_LOGD("custom", "Now time: %04d-%02d-%02d %02d:%02d:%02d (timestamp=%u)",
+        now.year, now.month, now.day_of_month,
+        now.hour, now.minute, now.second,
+        now.timestamp);
+
+      // Получаем время восхода относительно текущего времени
+      float sunrise_offset = id(sunrise_elevation_offset).state;
+      auto sunrise_opt = id(sun_sun).sunrise(now, sunrise_offset); // вместо стандартного значения -0.833
+      if (sunrise_opt.has_value()) {
+        auto sunrise_time = sunrise_opt.value();
+        ESP_LOGD("custom", "Sunrise time: %04d-%02d-%02d %02d:%02d:%02d (timestamp=%u)",
+          sunrise_time.year, sunrise_time.month, sunrise_time.day_of_month,
+          sunrise_time.hour, sunrise_time.minute, sunrise_time.second,
+          sunrise_time.timestamp);
+
+        int diff = (int)(sunrise_time.timestamp - now.timestamp);
+        if (diff < 0) {
+          ESP_LOGD("custom", "Sunrise already passed, adding 86400 seconds");
+          diff += 86400; // Добавляем сутки, если восход уже был сегодня
+        }
+        ESP_LOGD("custom", "Seconds until sunrise: %d", diff);
+        return diff;
+      } else {
+        ESP_LOGD("custom", "Sunrise time not available");
+      }
+      return 0;
+
+  - platform: template
+    name: "Seconds until sunset"
+    id: seconds_until_sunset
+    icon: mdi:weather-sunset-down
+    update_interval: 30s
+    lambda: |-
+      auto now = id(ds1307_time).now();
+      ESP_LOGD("custom", "Now time: %04d-%02d-%02d %02d:%02d:%02d (timestamp=%u)",
+        now.year, now.month, now.day_of_month,
+        now.hour, now.minute, now.second,
+        now.timestamp);
+
+      // Получаем время заката относительно текущего времени
+      float sunset_offset = id(sunset_elevation_offset).state;
+      auto sunset_opt = id(sun_sun).sunset(now, sunset_offset); // вместо стандартного значения -0.833
+      if (sunset_opt.has_value()) {
+        auto sunset_time = sunset_opt.value();
+        ESP_LOGD("custom", "Sunset time: %04d-%02d-%02d %02d:%02d:%02d (timestamp=%u)",
+          sunset_time.year, sunset_time.month, sunset_time.day_of_month,
+          sunset_time.hour, sunset_time.minute, sunset_time.second,
+          sunset_time.timestamp);
+
+        int diff = (int)(sunset_time.timestamp - now.timestamp);
+        if (diff < 0) {
+          ESP_LOGD("custom", "Sunset already passed, adding 86400 seconds");
+          diff += 86400; // Добавляем сутки, если закат уже был сегодня
+        }
+        ESP_LOGD("custom", "Seconds until sunset: %d", diff);
+        return diff;
+      } else {
+        ESP_LOGD("custom", "Sunset time not available");
+      }
+      return 0;
+  - platform: template
+    name: "Blind Position Sensor"
+    id: blind_position_sensor
+    icon: mdi:label-percent-outline
+    accuracy_decimals: 0
+    update_interval: 5s
+    filters: 
+      - round: 0
+    lambda: |-
+      // Возвращаем текущее значение позиции
+      if (id(endstop) == 0) return 0.0;
+      return float(id(my_stepper).current_position) / float(id(endstop)) * 100.0;
+  - platform: adc
+    pin: GPIO1
+    name: "Voltage 18650"
+    id: battery_voltage
+    update_interval: 30s
+    attenuation: 11db
+    filters:
+      - multiply: 1.5
+  - platform: ina226
+    address: 0x40
+    i2c_id: bus_a
+    shunt_resistance: 0.1 ohm
+    max_current: 3.2A
+# adc_time: 140us
+    adc_averaging: 128
+    bus_voltage:
+      name: "Stepper Voltage"
+    update_interval: 2s # Уменьшил для более частых триггеров on_value (было 2s)
+    current:
+      name: "Stepper Current"
+      id: stepper_current
+      filters:
+        - sliding_window_moving_average:
+            window_size: 3 # Сглаживает за 3 измерений
+      on_value:
+        - lambda: |-
+            float current = x; // x - текущее значение сенсора (A)
+            float threshold = id(start_current_threshold).state;
+            if (current > threshold && !id(motor_running)) {
+              // Мотор начал движение
+              id(motor_running) = true;
+              id(last_movement_start) = millis();
+              id(safety_triggered) = false;
+              ESP_LOGI("safety", "Motor started (current: %.3f A), safety check started", current);
+              id(safety_script).execute();
+            } else if (current <= threshold && id(motor_running)) {
+              // Мотор остановился
+              id(motor_running) = false;
+              ESP_LOGI("safety", "Motor stopped (current: %.3f A), safety check stopped", current);
+              id(safety_script).stop();
+            }
+  - platform: debug
+    free:
+      name: "Heap Free"
+    block:
+      name: "Heap Max Block"
+    loop_time:
+      name: "Loop Time"
+debug:
+  update_interval: 5s
+esphome:
+  name: ${name}
+  on_boot:
+    - priority: 250
+      then:
+        - if:
+            condition:
+              lambda: 'return id(wifi_enabled);'
+            then:
+              - wifi.enable
+            else:
+              - wifi.disable
+    - priority: -50.0
+      then:
+      - stepper.report_position: # Установить шаговый двигатель в глобальную переменную
+          id: ${mystepper}
+          position: !lambda return id(${mystepper}_global);
+      - stepper.set_target: # Установить шаговый двигатель в глобальную переменную
+          id: ${mystepper}
+          target: !lambda return id(${mystepper}_global);
+      - if: # Если жалюзи закрыты
+          condition:
+            - lambda: 'return id(${mystepper}_global) == 0;'
+          then: # Опубликовать состояние и т.д.
+            - cover.template.publish:
+                id: blinded
+                state: CLOSED
+                current_operation: IDLE
+      - if: # Если жалюзи открыты
+          condition:
+            - lambda: 'return id(${mystepper}_global) == id(endstop);'
+          then: # Опубликовать состояние и т.д.
+            - cover.template.publish:
+                id: blinded
+                state: OPEN
+                current_operation: IDLE
+      - if: # Если жалюзи находятся в промежуточном положении
+          condition:
+            - lambda: 'return (id(${mystepper}_global) != 0) && (id(${mystepper}_global) != id(endstop));'
+          then: # Опубликовать состояние и т.д.
+            - cover.template.publish:
+                id: blinded
+                position: !lambda 'return (float(float(id($mystepper).current_position) / float(id(endstop))));' 
+                current_operation: IDLE
+      - text_sensor.template.publish: # Публикуем актуальное число положения при полной открытии
+          id: endstop_sensor
+          state: !lambda 'return std::to_string(id(endstop));'  # Преобразуем число в строку
+    - priority: -100
+      then:
+        - ds1307.read_time: # считать время RTC после загрузки
+            id: ds1307_time
+        - lambda: |-
+            // Сбрасываем флаг получения времени
+            id(time_received) = false;
+            // Увеличиваем счётчик запусков
+            id(bootCount)++;
+            // Получаем причину пробуждения
+            int wakeup_reason = (int)esp_sleep_get_wakeup_cause();
+            // Сохраняем причину в глобальную переменную для использования в interval
+            id(last_wakeup_reason) = wakeup_reason;
+            // Формируем новую запись в формате "N,R"
+            std::string entry = std::to_string(id(bootCount)) + "," + std::to_string(wakeup_reason);
+            // Проверяем длину истории и ограничиваем до 10 записей
+            const size_t max_entries = 10;
+            size_t current_entries = std::count(id(bootHistory).begin(), id(bootHistory).end(), ' ') + 1;
+            if (current_entries >= max_entries) {
+              // Удаляем первую запись (самую старую)
+              size_t pos = id(bootHistory).find(' ');
+              if (pos != std::string::npos) {
+                id(bootHistory) = id(bootHistory).substr(pos + 1);
+              } else {
+                id(bootHistory) = ""; // если нет пробелов, очищаем
+              }
+            }
+            // Добавляем пробел, если история не пустая
+            if (!id(bootHistory).empty()) {
+              id(bootHistory) += " ";
+            }
+            // Добавляем новую запись в историю
+            id(bootHistory) += entry;
+            // Логи для отладки
+            ESP_LOGI("boot", "Boot count: %d, Wakeup reason: %d", id(bootCount), wakeup_reason);
+            ESP_LOGI("boot", "Boot history: %s", id(bootHistory).c_str());
+        - text_sensor.template.publish:
+            id: wakeup_cause_text
+            state: !lambda |-
+              switch (id(last_wakeup_reason)) {
+                case 0: return {"0-Norm"};
+                case 2: return {"2-EXT0"};
+                case 3: return {"3-EXT1"};
+                case 4: return {"4-Timer"};
+                case 5: return {"5-Touchpad"};
+                case 6: return {"6-ULP"};
+                case 7: return {"7-GPIO"};
+                case 8: return {"8-UART"};
+                case 9: return {"9-WIFI"};
+                case 10: return {"10-COCPU"};
+                case 11: return {"11-COCPU_TRAP"};
+                case 12: return {"12-BT"};
+                default: return {"Unknown"};
+              }
+number:
+  - platform: template
+    name: "Sunrise Elevation Offset"
+    id: sunrise_elevation_offset
+    min_value: -45
+    max_value: 45
+    step: 0.5
+    unit_of_measurement: "°"
+    initial_value: 0 # По умолчанию 0°
+    optimistic: true
+    mode: box
+    restore_value: true
+    icon: mdi:sun-angle-outline
+  - platform: template
+    name: "Sunset Elevation Offset"
+    id: sunset_elevation_offset
+    min_value: -45
+    max_value: 45
+    step: 0.5
+    unit_of_measurement: "°"
+    initial_value: 0 # По умолчанию 0°
+    optimistic: true
+    mode: box
+    restore_value: true
+    icon: mdi:sun-angle-outline
+  - platform: template
+    name: "Brightness" # Установка яркости
+    id: brightness
+    optimistic: true
+    min_value: 0
+    max_value: 100
+    step: 20
+    initial_value: 80
+    unit_of_measurement: "%"
+    restore_value: true
+    on_value:
+      then:
+        lambda: |-
+          id(my_display).set_contrast(x / 100.0);
+  - platform: template
+    name: Blind Position"
+    id: blind_position_slider
+    icon: mdi:label-percent-outline
+    min_value: 0
+    max_value: 100
+    step: 1
+    optimistic: true
+  - platform: template
+    name: Stepper Speed
+    icon: mdi:speedometer
+    id: stepper_speed
+    optimistic: true
+    mode: box
+    restore_value: true
+    min_value: 0
+    max_value: 1000
+    step: 10
+  - platform: template
+    name: "Max Current (A)"
+    id: max_current
+    icon: mdi:flash-alert
+    optimistic: true
+    min_value: 0.0
+    max_value: 0.5 # Подстройте под ваш мотор
+    step: 0.05
+    mode: box
+    initial_value: 0.4 # Начальное значение
+    unit_of_measurement: "A"
+    restore_value: true
+  - platform: template
+    name: "Timeout (seconds)"
+    id: timeout_seconds
+    icon: mdi:timer-alert-outline
+    optimistic: true
+    min_value: 10.0
+    max_value: 300.0 # Максимум 5 минут
+    step: 1.0
+    mode: box
+    initial_value: 90.0 # Начальное значение
+    restore_value: true
+  # Ток порога запуска:
+  - platform: template
+    name: "Stepper Start Current (A)"
+    id: start_current_threshold
+    icon: mdi:current-dc
+    optimistic: true
+    min_value: 0.01
+    max_value: 0.5
+    step: 0.01
+    mode: box
+    initial_value: 0.1 # Порог для запуска (настрой под idle-ток мотора)
+    unit_of_measurement: "А"
+    restore_value: true
+switch:
+  - platform: gpio
+    name: Supply
+    icon: mdi:power-cycle
+    id: supply
+    pin:
+      number: GPIO5
+      inverted: false
+      mode:
+        output: true
+        pullup: true
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: gpio
+    name: Display
+    icon: mdi:tablet-dashboard
+    id: display_supply
+    pin:
+      number: GPIO7
+      inverted: false
+      mode:
+        output: true
+        pullup: true
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template # Виртуальный выключатель отчета о движении
+    name: 'Report'
+    icon: mdi:chart-gantt
+    optimistic: true
+    id: report
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: template # Управление шторами авто или вручную
+    name: 'Auto_rolls'
+    icon: mdi:window-shutter-auto
+    optimistic: true
+    id: auto_rolls
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template # Виртуальный выключатель сон по закату-рассвету/установленному времени
+    name: 'Sun/Time'
+    icon: mdi:sun-clock-outline
+    optimistic: true
+    id: sun_time
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: template # Виртуальный выключатель работа/возможность сна
+    name: 'Sleep/Work'
+    icon: mdi:sleep-off
+    optimistic: true
+    id: sleep_work
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    name: Setup Switch # Переключатель для входа в режим настройки
+    icon: mdi:cogs
+    id: setupswitch
+    lambda: |-
+      if (id(settingmode) != 0) {
+        return true;
+      } else {
+        return false;
+      }
+    turn_on_action:
+      then:
+        - logger.log: "Вход в режим настройки"
+        - globals.set:
+            id: settingmode
+            value:  '1'
+    turn_off_action:
+      then:
+        - logger.log: "Выход из режима настройки"
+        - globals.set:
+            id: settingmode
+            value:  '0'
+  - platform: template
+    name: "Gercon Correction"
+    id: correction_switch
+    optimistic: true
+    icon: mdi:electric-switch
+    restore_mode: RESTORE_DEFAULT_OFF
+script:
+# Скрипт установки длины роллеты (ОБУЧЕНИЯ)
+  - id: setupbutton
+    then:
+      - if:
+          condition:
+            - lambda: 'return (id(settingmode) == 3);'
+          then:
+            - logger.log: "Нажата кнопка настройки: режим 3"
+            - logger.log: "Жалюзи теперь настроены"
+            - logger.log:
+                format: "Конечная точка: %d"
+                args: [ 'id(endstop)' ]
+            - stepper.set_target: # Установить позицию шагового двигателя
+                id: $mystepper
+                target: !lambda return id($mystepper).current_position;
+            - globals.set: # Установить переменную конечной точки
+                id: endstop
+                value: !lambda return id($mystepper).current_position;
+            - globals.set: # Установить глобальную позицию шагового двигателя
+                id: ${mystepper}_global
+                value: !lambda return id($mystepper).current_position;
+            - globals.set: # Сбросить режим настройки
+                id: settingmode
+                value:  '0'
+            - globals.set: # Установить состояние как ОТКРЫТО
+                id: openclosed
+                value: '1'
+            - text_sensor.template.publish: # Добавляем запись в текстовый сенсор
+                id: endstop_sensor
+                state: !lambda 'return std::to_string(id(endstop));' # Преобразуем число в строку
+            - cover.template.publish:
+                id: blinded
+                state: OPEN 
+                current_operation: IDLE
+            - logger.log: "Выход из режима настройки"
+            - display.page.show: finish
+            - delay: 3s
+            - display.page.show: main_page 
+      - if:
+          condition:
+            - lambda: 'return (id(settingmode) == 2);'
+          then:
+            - display.page.show: close_setting
+            - logger.log: "Нажата кнопка настройки: режим 2"
+            - logger.log: "Жалюзи открываются, нажмите кнопку, когда они полностью открыты"
+            - stepper.report_position: # Сбросить позицию шагового двигателя в 0
+                id: $mystepper
+                position: '0'
+            - stepper.set_target: # Сбросить позицию шагового двигателя в 0
+                id: $mystepper
+                target: '0'
+            - globals.set: # Установить глобальную позицию в 0 (двигатель не двигается, он уже там!)
+                id: ${mystepper}_global
+                value: '0'
+            - stepper.set_target: # Установить позицию шагового двигателя в 500000
+                id: $mystepper
+                target: '500000'
+            - globals.set: # Перейти к следующему режиму настройки
+                id: settingmode
+                value: '3' 
+      - if:
+          condition:
+            - lambda: 'return (id(settingmode) == 1);'
+          then:
+            - display.page.show: open_setting
+            - logger.log: "Нажата кнопка настройки: режим 1"
+            - logger.log: "Жалюзи закрываются, нажмите кнопку, когда они полностью закрыты"
+            - stepper.report_position: # Установить позицию шагового двигателя в 500000, приказ двигаться к 0 (Закрыто)
+                id: $mystepper
+                position: '500000'
+            - globals.set: # Перейти к следующему режиму настройки
+                id: settingmode
+                value: '2'
+# предохранитель
+  - id: safety_script
+    mode: restart
+    then:
+      - lambda: |-
+          // Фиксируем время старта проверки в global (один раз при старте скрипта)
+          id(last_movement_start) = millis();
+      - repeat:
+          count: 500 # Максимум 500 итераций (~ 100сек при 200ms delay)
+          then:
+            - delay: 200ms # Проверяем каждые 200 мс
+            - lambda: |-
+                if (!id(motor_running)) {
+                  ESP_LOGI("safety", "Motor not running, stopping safety script");
+                  id(safety_script).stop();
+                  return;
+                }
+                float current = id(stepper_current).state;
+                float max_current_val = id(max_current).state;
+                int timeout_ms_val = id(timeout_seconds).state * 1000;  // Используем твой id
+                uint32_t now = millis();
+                uint32_t elapsed = now - id(last_movement_start);  // Используем global start_time
+                bool timeout_reached = elapsed > timeout_ms_val;
+                bool current_high = current > max_current_val;
+
+                // Логи для отладки (чтобы увидеть значения)
+                ESP_LOGD("safety", "Current: %.3f A, max: %.3f A, elapsed: %u ms, timeout_ms: %d, timeout_reached: %s",
+                  current, max_current_val, elapsed, timeout_ms_val, timeout_reached ? "yes" : "no");
+
+                if (current_high || timeout_reached) {
+                  // Устанавливаем флаг срабатывания
+                  id(safety_triggered) = true;
+                  ESP_LOGW("safety", "Safety triggered! Current: %.3f A, timeout: %s, turning off supply", current, timeout_reached ? "yes" : "no");
+                  id(supply).turn_off();  // Отключаем питание мотора
+                  id(sleep_work).turn_on();  // Отключаем сон
+                  id(my_display).show_page(id(safety_alarm));
+                  id(safety_script).stop();
+                }
+deep_sleep:
+  id: my_deep_sleep
+  wakeup_pin_mode: INVERT_WAKEUP
+  wakeup_pin:
+    number: 0
+    allow_other_uses: true # Кнопка также пробуждает
+    mode: INPUT_PULLUP
+    inverted: false
+
+time:
+  - platform: ds1307
+    id: ds1307_time
+    address: 0x68
+# update_interval: 30s # Обновляет системное время из RTC каждые 60 сек (даже без Wi-Fi)
+  - platform: homeassistant
+    id: homeassistant_time
+    timezone: UTC-3
+    update_interval: 1min
+    on_time_sync: 
+      - lambda: |-
+          id(time_received_homeassistant) = true;  // Устанавливаем флаг, когда время от Home Assistant получено
+          ESP_LOGI("custom", "Time received from Home Assistant, flag set to TRUE");
+          auto ha_now = id(homeassistant_time).now();
+          // Диапазон: 2025–2030 (1735689600 – 1893456000)
+          if (ha_now.is_valid() && ha_now.timestamp > 1577836800 && ha_now.timestamp < 1893456000) {
+            id(ds1307_time).write_time();
+            ESP_LOGI("custom", "HA time valid and in range, written to RTC: %s", ha_now.strftime("%Y-%m-%d %H:%M:%S").c_str());
+          } else {
+            ESP_LOGW("custom", "HA time invalid or out of range (timestamp: %lld), skipping write to RTC", ha_now.timestamp);
+          }
+datetime:
+  - platform: template # Установка времени подъема роллеты
+    id: rolls_up
+    type: time
+    web_server:
+      sorting_group_id: sorting_group_time_sun
+    name: "Rolls UP"
+    icon: mdi:sort-clock-descending-outline
+    optimistic: true
+    initial_value: "07:00:00"
+    restore_value: true
+  - platform: template # Установка времени опускания роллеты
+    id: rolls_down
+    type: time
+    web_server:
+      sorting_group_id: sorting_group_time_sun
+    name: Rolls Down
+    icon: mdi:sort-clock-ascending-outline
+    optimistic: true
+    initial_value: "18:00:00"
+    restore_value: true
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO6 # геркон к gpio6 и GND
+      mode: INPUT_PULLUP
+      inverted: true
+    name: Gerkon
+    icon: mdi:electric-switch
+    id: gerkon
+    on_press:
+      then:
+        - if:
+            condition:
+              lambda: |-
+                // Проверяем, что штора открывается
+                return id(blinded).current_operation == CoverOperation::COVER_OPERATION_OPENING;
+            then:
+              - if:
+                  condition:
+                    switch.is_on: correction_switch
+                  then:
+                    - logger.log: "Геркон сработал, коррекция позиции мотора включена"
+                    - stepper.report_position:
+                        id: ${mystepper}
+                        position: !lambda 'return id(endstop);'  # Коррекция позиции на endstop
+                    - cover.template.publish:
+                        id: blinded
+                        position: 1.0  # 100%
+                        current_operation: IDLE
+                    - cover.stop: blinded
+                  else:
+                    - logger.log: "Геркон сработал, коррекция позиции мотора выключена — стоп мотор"
+                    - cover.stop: blinded
+  - platform: gpio
+    pin:
+      number: GPIO0 # кнопка к gpio0 и GND
+      allow_other_uses: true
+      mode: INPUT_PULLUP
+      inverted: true
+    name: Control Button
+    id: control_button
+    icon: mdi:gesture-tap-button
+    filters:
+      - delayed_on: 20ms # Защита от дребезга
+    on_multi_click:
+    - timing: # Одиночное длительное нажатие для перезагрузки в аварийном режиме
+        - ON for 3s to 5s
+        - OFF for at least 0.5s
+      then:
+        - if: # Если находимся на главном экране
+            condition:
+              display.is_displaying_page:
+                id: my_display
+                page_id: main_page
+            then:
+              - switch.toggle: auto_rolls
+        - if: # Если находимся на экране аварии
+            condition:
+              display.is_displaying_page:
+                id: my_display
+                page_id: safety_alarm
+            then:
+              - button.press: restart_button
+    - timing: # Одиночное длительное нажатие для входа в режим настройки
+        - ON for 6s to 10s
+        - OFF for at least 0.5s
+      then:
+# - logger.log: "Вход в режим настройки"
+        - globals.set:
+            id: settingmode
+            value:  '1'
+        - display.page.show: start_learning
+    - timing: # Короткое нажатие для ОТКРЫТИЯ/ЗАКРЫТИЯ жалюзи и также для настройки
+        - ON for at most 1s
+        - OFF for at least 0.5s
+      then:
+        - if: # Если переменная настройки включена
+            condition:
+              - lambda: 'return id(settingmode) != 0;'
+            then: # Войти в режим настройки
+              - script.execute: setupbutton
+            else:
+              - if: # Если шторка в движении
+                  condition:
+                    - lambda: 'return id(blinded).current_operation == CoverOperation::COVER_OPERATION_OPENING || id(blinded).current_operation == CoverOperation::COVER_OPERATION_CLOSING;'
+                  then: # Остановить движение
+                    - cover.stop: blinded
+                  else:
+                    - lambda: |-
+                        auto cover = id(blinded);
+                        if (cover->current_operation != COVER_OPERATION_IDLE) {
+                          // Если штора движется → стоп
+                          cover->make_call().set_command_stop().perform();
+                        } else {
+                          // Если стоит → открыть или закрыть по предыдущему направлению
+                          if (id(last_direction) == 0) {
+                            // Было открытие → теперь закрыть
+                            cover->make_call().set_command_close().perform();
+                            id(last_direction) = 1; // Переключаем на закрытие для следующего раза
+                          } else {
+                            id(last_direction) = 0; // Переключаем на открытие
+                            if (!id(gerkon).state) {
+                            // Было закрытие → теперь открыть если геркон не сработал
+                            cover->make_call().set_command_open().perform();
+                            }
+                          }
+                        }
+    - timing: # Двойное нажатие спать\не спать
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at least 0.2s
+      then:
+        - switch.toggle: sleep_work
+    - timing: # Тройное нажатие для входа на экран справки
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at least 0.2s
+      then:
+        - display.page.show: info
+    - timing: # Четверное нажатие для входа на экран обучения
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at least 0.2s
+      then:
+        - if:
+            condition:
+              display.is_displaying_page: main_page
+            then:
+              - display.page.show: learning
+            else:
+              - display.page.show: main_page
+    - timing: # Пятерное нажатие включение\отключение вайфай
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at least 0.2s
+      then:
+        - lambda: |-
+            id(wifi_enabled) = !id(wifi_enabled);
+        - if:
+            condition:
+              lambda: 'return id(wifi_enabled);'
+            then:
+              - wifi.enable
+            else:
+              - wifi.disable
+    - timing: # Шестерное нажатие- пролистывание страниц дисплея
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at most 1s
+        - ON for at most 1s
+        - OFF for at least 0.2s
+      then:
+        - display.page.show_next: my_display
+interval:
+  - interval: 10s # Запускать этот блок каждые 10 секунд
+    then:
+      - lambda: |-
+
+          // Используем сохранённую причину из on_boot 
+          auto wakeup_cause = id(last_wakeup_reason);
+          bool is_timer_wakeup = (wakeup_cause == ESP_SLEEP_WAKEUP_TIMER);
+
+          // Логируем причину пробуждения (информационно, для отладки)
+          if (!is_timer_wakeup) {
+            ESP_LOGI("custom", "Wake-up NOT BY TIMER (cause: %d)", wakeup_cause);
+          } else {
+            ESP_LOGI("custom", "Wake-up BY TIMER");
+          }
+
+          // Получаем количество секунд до восхода и заката солнца из сенсоров
+          int diff_to_sunrise = id(seconds_until_sunrise).state;
+          int diff_to_sunset = id(seconds_until_sunset).state;
+
+          // Логируем текущее время до восхода и заката для отладки
+          ESP_LOGI("custom", "Current time until sunrise: %d, until sunset: %d", diff_to_sunrise, diff_to_sunset);
+
+          // Проверяем, что данные корректны — отрицательное время бессмысленно
+          if (diff_to_sunrise < 0 || diff_to_sunset < 0) {
+            ESP_LOGW("custom", "Invalid time difference, skipping..."); // Предупреждаем в логе
+            return; // Прерываем выполнение, чтобы не использовать некорректные данные
+          }
+
+          // Объявляем переменную для хранения длительности сна в миллисекундах
+          // Используем uint64_t, чтобы вместить большие значения (например, до 24 часов и больше)
+          uint64_t sleep_duration_ms = 0;
+
+          // Проверяем состояние выключателя sun_time — если выключен, то работаем с восходом/закатом
+          if (!id(sun_time).state) {
+            // ЛОГИКА: Определяем, должна ли роллета быть открыта (день) или закрыта (ночь)
+            auto sunrise_passed = id(seconds_until_sunrise).state > 43200.0f; // true, если восход уже был (время до следующего > полусуток).
+            auto sunset_passed = id(seconds_until_sunset).state > 43200.0f; // true, если закат уже был.
+            bool should_be_open = sunrise_passed && !sunset_passed; //true, если восход прошёл, но закат ещё нет (день).
+            // Логируй только если изменилось
+            static bool last_should_be_open = false;
+            if (should_be_open != last_should_be_open) {
+                ESP_LOGD("interval", "Should be open changed to: %s", should_be_open ? "true" : "false");
+                last_should_be_open = should_be_open;
+            }
+            // Выбираем ближайшее событие — восход или закат (меньшее из двух значений)
+            int min_diff = diff_to_sunrise < diff_to_sunset ? diff_to_sunrise : diff_to_sunset;
+
+            // Управляем роллетой (ТОЛЬКО ЕСЛИ WAKE-UP ПО ТАЙМЕРУ)
+            if (is_timer_wakeup || id(auto_rolls).state) {
+            // Только если день И позиция != 100% (не открыта)
+              if (should_be_open && id(blinded).position != 1.0f) {
+                id(blind_open).press();
+            // Только если ночь И позиция != 0% (закрыта)
+              } else if (!should_be_open && id(blinded).position != 0.0f) {
+                id(blind_close).press();
+              }
+            }
+            // Рассчитываем время сна в миллисекундах (секунды * 1000)
+            sleep_duration_ms = (uint64_t)min_diff * 1000ULL;
+          }
+          // Если sun_time включен — используем пользовательские установки времени datetime rolls_up и rolls_down
+          else {
+            // Получаем текущее время из RTC
+            auto current_time = id(ds1307_time).now();
+            // Проверяем корректность
+            if (current_time.timestamp < 1609459200) {
+              ESP_LOGW("custom", "RTC time invalid (timestamp: %ld), skipping custom time logic", current_time.timestamp);
+              return;
+            }
+            // Теперь используем поля ESPTime напрямую
+            int current_seconds = current_time.hour * 3600 + current_time.minute * 60 + current_time.second;
+            // Логи для отладки
+            ESP_LOGI("custom", "Current time: %04d-%02d-%02d %02d:%02d:%02d",
+              current_time.year, current_time.month, current_time.day_of_month,
+              current_time.hour, current_time.minute, current_time.second);
+            // Переводим текущее время в секунды с начала суток
+            //int current_seconds = now.hour * 3600 + now.minute * 60 + now.second;
+            // Аналогично переводим времена подъёма и опускания роллет в секунды
+            int rolls_up_seconds = id(rolls_up).hour * 3600 + id(rolls_up).minute * 60 + id(rolls_up).second;
+            int rolls_down_seconds = id(rolls_down).hour * 3600 + id(rolls_down).minute * 60 + id(rolls_down).second;
+
+            // НОВАЯ ЛОГИКА: Определяем, должна ли роллета быть открыта
+            // Открыта, если текущее время в интервале [rolls_up, rolls_down) с учётом перехода через полночь
+            bool should_be_open;
+            if (rolls_up_seconds < rolls_down_seconds) {
+              should_be_open = (current_seconds >= rolls_up_seconds && current_seconds < rolls_down_seconds);
+            } else {
+              should_be_open = (current_seconds >= rolls_up_seconds || current_seconds < rolls_down_seconds);
+            }
+            ESP_LOGI("custom", "Time mode: Should be open: %s", should_be_open ? "YES" : "NO");
+
+            // Лямбда-функция для вычисления разницы во времени с учётом перехода через полночь
+            auto diff = [](int from, int to) -> int {
+              int d = to - from;
+              if (d <= 0) d += 24 * 3600; // Если время уже прошло сегодня — считаем до завтрашнего события
+              return d;
+            };
+
+            // Считаем сколько секунд осталось до подъёма и до опускания роллет
+            int diff_up = diff(current_seconds, rolls_up_seconds);
+            int diff_down = diff(current_seconds, rolls_down_seconds);
+
+            // Выбираем ближайшее событие (меньшее значение)
+            int min_diff = diff_up < diff_down ? diff_up : diff_down;
+
+            ESP_LOGI("custom", "Time mode ON. Next event in %d seconds", min_diff);
+            // Управляем роллетами (ТОЛЬКО ЕСЛИ WAKE-UP ПО ТАЙМЕРУ)
+            if (is_timer_wakeup || id(auto_rolls).state) {
+              if (should_be_open) {
+                id(blind_open).press();  // Открываем
+              } else {
+                id(blind_close).press();  // Закрываем
+              }
+            }
+            // Рассчитываем время сна в миллисекундах
+            sleep_duration_ms = (uint64_t)min_diff * 1000ULL;
+          }
+
+          // Сохраняем рассчитанную длительность сна в глобальную переменную
+          id(next_sleep_duration) = sleep_duration_ms;
+          // Проверка: если больше 24 часов (24 * 3600 * 1000 ms = 86400000 ms), публикуем "NaN"
+          if (sleep_duration_ms > 86400000) {
+            id(next_sleep_duration_sensor).publish_state("NaN");
+            ESP_LOGI("custom", "Skipped publishing due to invalid time: %d ms", sleep_duration_ms);
+            return;  // Выходим, не публикуем дальше
+          }
+          // id(next_sleep_duration_sensor).publish_state(to_string(sleep_duration_ms / 1000.0f) + " seconds"); // Публикуем состояние сенсора с длительностью сна в секундах (для визуализации в HA)
+          // Публикуем состояние сенсора с длительностью сна в формате "чч:мм:сс"
+          int total_seconds = static_cast<int>(sleep_duration_ms / 1000.0f);
+          int hours = total_seconds / 3600;
+          int minutes = (total_seconds % 3600) / 60;
+          // int seconds = total_seconds % 60;
+
+          char buffer[20];
+          snprintf(buffer, sizeof(buffer), "%dh %dm", hours, minutes);
+          // snprintf(buffer, sizeof(buffer), "%dh %dm %ds", hours, minutes, seconds);
+          id(next_sleep_duration_sensor).publish_state(std::string(buffer));
+      - if:
+          condition:
+            for:
+              time: 8s
+              condition:
+                or:
+                  - display.is_displaying_page:
+                      id: my_display
+                      page_id: learning
+                  - display.is_displaying_page:
+                      id: my_display
+                      page_id: info
+          then:
+            - display.page.show: main_page
+
+  - interval: 2s
+    then:
+      - if:
+          condition:
+            - lambda: 'return !id(sleep_work).state;'
+            - lambda: 'return id(blinded).current_operation != CoverOperation::COVER_OPERATION_OPENING && id(blinded).current_operation != CoverOperation::COVER_OPERATION_CLOSING;'
+          then:
+            - lambda: |-
+                if (id(countdown) == 0) {
+                  id(countdown) = 10;
+                } else if (id(countdown) > 0) {
+                  id(countdown)--;
+                }
+            - if:
+                condition:
+                  lambda: 'return id(countdown) == 0 && id(homeassistant_time).now().is_valid() && id(homeassistant_time).now().timestamp > 1735689600 && id(homeassistant_time).now().timestamp < 1893456000 && !id(sleep_work).state;'
+                then:
+                  - display.page.show: sleeping
+                  - logger.log: "Переход в глубокий сон"
+                  - delay: 2s
+                  - deep_sleep.enter:
+                      id: my_deep_sleep
+                      sleep_duration: !lambda 'return id(next_sleep_duration);'
+      - if:
+          condition:
+            - lambda: 'return (id(${mystepper}).current_position != id(${mystepper}).target_position) && id(report).state;'
+          then:
+            - cover.template.publish:
+                id: blinded
+                position: !lambda 'return (float(float(id(${mystepper}).current_position) / float(id(endstop))));' 
+button:
+  - platform: template # Немедленный сон
+    id: sleep_start
+    name: "Sleep Start"
+    icon: mdi:sleep
+    on_press: 
+      then:
+        - display.page.show: sleeping
+        - logger.log: "Переход в глубокий сон"
+        - delay: 1s
+        - deep_sleep.enter:
+            id: my_deep_sleep
+            sleep_duration: !lambda 'return id(next_sleep_duration);'
+  - platform: template # Открыть
+    id: blind_open
+    icon: mdi:blinds-open
+    name: "Blind Open"
+    on_press: 
+      then:
+        - cover.open: blinded
+  - platform: template # Открыть
+    id: blind_close
+    icon: mdi:roller-shade-closed
+    name: "Blind Close"
+    on_press: 
+      then:
+        - cover.close: blinded
+  - platform: template
+    name: Setup Button # Программная кнопка для входа в рехим обучения
+    id: ha_setup
+    icon: mdi:window-shutter-settings
+    on_press:
+      - if: # Если переменная настройки включена
+          condition:
+            - lambda: 'return id(settingmode) != 0;'
+          then: # Войти в режим обучения
+            - script.execute: setupbutton
+text_sensor:
+  - platform: debug
+    device:
+      name: "Device Info"
+    reset_reason:
+      name: "Reset Reason"
+  - platform: template
+    name: "Boot History"
+    id: boot_history_sensor
+    icon: mdi:notebook-check-outline
+    lambda: |-
+      return id(bootHistory);
+  - platform: template
+    name: "Next Sleep Duration"
+    id: next_sleep_duration_sensor
+    icon: mdi:bed-clock
+  - platform: template
+    name: "Endstop Position"  
+    id: endstop_sensor
+    icon: mdi:ray-end
+    update_interval: never # Обновление только вручную (через скрипт)
+  - platform: template
+    name: "Current HA Time"
+    icon: mdi:home-clock
+    id: current_ha_time
+    lambda: |-
+      char str[17]; time_t currTime = id(homeassistant_time).now().timestamp;
+      strftime(str, sizeof(str), "%Y-%m-%d %H:%M", localtime(&currTime));
+      return  { str };
+    update_interval: 60s
+  - platform: sun
+    name: Sun Next Sunrise
+    type: sunrise
+    id: next_sunrise_time
+  - platform: sun
+    name: Sun Next Sunset
+    type: sunset
+    id: next_sunset_time 
+  - platform: template
+    name: Next Sun Event
+    update_interval: 60s
+    id: next_sun_event # Время до следующего заката\рассвета. Просто инфо, не используется
+    icon: mdi:sun-clock
+    lambda: |-
+      auto now = id(homeassistant_time).now();
+      if (!now.is_valid())
+        return {"--:--"}; // Время не синхронизировано
+      std::string target_str = "23:59:59";
+      target_str = id(sun_sun).is_above_horizon()?id(next_sunset_time).state:id(next_sunrise_time).state;
+      time_t target_ts = std::stoi(target_str.substr(0, 2)) * 60 + std::stoi(target_str.substr(3, 2));
+      // Текущие минуты дня (например, 12:00 -> 720)
+      int now_minutes = now.hour * 60 + now.minute;
+      // Вычисляем разницу в минутах
+      int delta = target_ts - now_minutes;
+      // Если отрицательно (переход через сутки), добавляем 1440 минут (сутки)
+      if (delta < 0) delta += 1440;
+      // Форматируем в HH:MM (например, 75 минут -> "01:15")
+      char buffer[10];
+      sprintf(buffer, "%02d:%02d", delta / 60, delta % 60);
+      return {buffer};
+  - platform: template
+    id: wakeup_cause_text
+    icon: mdi:chat-sleep-outline
+    name: "Wakeup Cause"
+    update_interval: never
+    lambda: |-
+      switch (id(last_wakeup_reason)) {
+        case 0: return {"0-Norm"};
+        case 2: return {"2-EXT0"};
+        case 3: return {"3-EXT1"};
+        case 4: return {"4-Timer"};
+        case 5: return {"5-Touchpad"};
+        case 6: return {"6-ULP"};
+        case 7: return {"7-GPIO"};
+        case 8: return {"8-UART"};
+        case 9: return {"9-WIFI"};
+        case 10: return {"10-COCPU"};
+        case 11: return {"11-COCPU_TRAP"};
+        case 12: return {"12-BT"};
+        default: return {"Unknown"};
+      }
+stepper:
+  - platform: a4988
+    id: ${mystepper}
+    step_pin: ${pin_a}
+    dir_pin: 
+      number: ${pin_b}
+      inverted: true
+    max_speed: ${max_speed}
+    sleep_pin:
+      number: ${pin_c}
+      # inverted: true
+    acceleration: inf
+    deceleration: inf
+
+
+cover:
+  - platform: template
+    name: ${name}
+    id: blinded
+    open_action:
+      then:
+        - if:
+            condition:
+              lambda: 'return !id(gerkon).state;'
+            then:
+              - logger.log:
+                  format: "Конечная точка: %d"
+                  args: [ 'id(endstop)' ]
+              - stepper.set_target: # Отправить шаговый двигатель к конечной точке
+                  id: ${mystepper}
+                  target: !lambda return id(endstop);
+              - cover.template.publish:
+                  id: blinded
+                  position: !lambda 'return (float(float(id(${mystepper}).current_position) / float(id(endstop))));' 
+                  current_operation: OPENING
+              - wait_until: # Ждать достижения конечной точки
+                  lambda: 'return (id(${mystepper}).current_position == id(endstop) || id(gerkon).state);'
+              - globals.set: # Установить глобальную переменную текущей позиции
+                  id: ${mystepper}_global
+                  value: !lambda return id(${mystepper}).current_position; 
+              - globals.set: # Установить состояние в ОТКРЫТО (нет необходимости в режиме оптимистичного обновления)
+                  id: openclosed
+                  value: '1'
+              - cover.template.publish:
+                  id: blinded
+                  state: OPEN 
+                  current_operation: IDLE
+              - number.set:
+                  id: blind_position_slider
+                  value: 100
+    close_action:
+      then:
+        - logger.log: "Закрытие"
+        - stepper.set_target: # Отправить шаговый двигатель в позицию 0
+            id: ${mystepper}
+            target: '0'
+        - cover.template.publish:
+            id: blinded
+            position: !lambda 'return (float(float(id(${mystepper}).current_position) / float(id(endstop))));' 
+            current_operation: CLOSING
+        - wait_until: # Ждать достижения позиции 0
+            lambda: 'return id(${mystepper}).current_position == 0;'
+        - globals.set: # Установить глобальную переменную текущей позиции
+            id: ${mystepper}_global
+            value: !lambda return id(${mystepper}).current_position; 
+        - globals.set: # Установить состояние в ЗАКРЫТО (нет необходимости в режиме оптимистичного обновления)
+            id: openclosed
+            value: '0'
+        - cover.template.publish:
+            id: blinded
+            state: CLOSED
+            current_operation: IDLE
+        - number.set:
+            id: blind_position_slider
+            value: 0
+    position_action:
+      then:
+        - stepper.set_target:
+            id: ${mystepper}
+            target: !lambda return int(id(endstop) * pos);
+        - wait_until: # Ждать достижения позиции
+            lambda: 'return id(${mystepper}).current_position == (int(id(endstop) * pos));'
+        - globals.set: # Установить глобальную переменную текущей позиции
+            id: ${mystepper}_global
+            value: !lambda return id(${mystepper}).current_position; 
+        - cover.template.publish:
+            id: blinded
+            position: !lambda 'return (float(float(id(${mystepper}).current_position) / float(id(endstop))));' 
+            current_operation: IDLE
+        - number.set:
+            id: blind_position_slider
+            value: !lambda 'return float(id(${mystepper}).current_position) / float(id(endstop)) * 100.0;' 
+    stop_action:
+      then:
+        - stepper.set_target:
+            id: ${mystepper}
+            target: !lambda return id(${mystepper}).current_position;
+        - globals.set: # Установить глобальную переменную текущей позиции
+            id: ${mystepper}_global
+            value: !lambda return id(${mystepper}).current_position;
+        - cover.template.publish:
+            id: blinded
+            position: !lambda 'return (float(float(id(${mystepper}).current_position) / float(id(endstop))));' 
+            current_operation: IDLE
+        - number.set:
+            id: blind_position_slider
+            value: !lambda 'return float(id(${mystepper}).current_position) / float(id(endstop)) * 100.0;' 
+    has_position: true
+    device_class: blind
+remote_receiver:
+  pin:
+    number: GPIO0
+    inverted: true
+    mode: INPUT_PULLUP
+    allow_other_uses: true
+  dump: all
+  on_lg:
+    then:
+    - if:
+        condition: # STOP
+          - lambda: 'return (x.data == 0x807FC837);'  
+        then:
+          - cover.stop: blinded
+    - if:
+        condition: # UP
+          - lambda: 'return (x.data == 0x807F6897);'  
+        then:
+          - cover.open: blinded
+    - if:
+        condition: # DOWN
+          - lambda: 'return (x.data == 0x807F58A7);'  
+        then:
+          - cover.close: blinded
