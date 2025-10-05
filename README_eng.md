@@ -1,71 +1,86 @@
-# Roller-Blind: Smart Automated Roller Blind on ESPHome
+# Smart-Roller-Blind: Smart Automated Roller Blind on ESPHome
 
-![ESPHome Logo](https://avatars.githubusercontent.com/u/36563322?s=200&v=4) ![Home Assistant Logo](https://avatars.githubusercontent.com/u/13844975?s=200&v=4)
+![ESPHome Logo](roller-blind-img/esphome1.png) ![Home Assistant Logo](https://avatars.githubusercontent.com/u/13844975?s=200&v=4)
+<p align="center">
+    <img alt="Static Badge" src="https://img.shields.io/badge/made%20by-ParusSmartHome-blue">
+    <img alt="Static Badge" src="https://img.shields.io/badge/version-v2.0%20Beta-green">
+    <img alt="Static Badge" src="https://img.shields.io/badge/esphome min version-2025.7.5-red">
+    <img alt="Static Badge" src="https://img.shields.io/badge/license-MIT-orange">
+</p>
 
 ## 🌟 Project Description
 
-**Roller-Blind** is an intelligent roller blind control system based on ESPHome and integrated with Home Assistant. The project enables automatic control of the blind depending on the time of day, sun position, or user settings, with support for power-saving deep sleep mode. It is ideal for smart homes, providing comfort, safety, and energy efficiency.
+**Smart-Roller-Blind** is an intelligent roller blind (curtain) control system built on ESPHome and integrated with Home Assistant. The project allows automatic and manual control of the blind depending on the time of day, sun position, or user settings, with support for energy-saving deep sleep mode. Perfect for smart homes, providing comfort, safety, and energy efficiency. Without recharging, it provides autonomous operation for 1-2 months with daily use. By replacing the stepper motor with a driver with more powerful options, it can work with heavy curtains.
 
-Key features:
-- **Automatic control**: The blind opens/closes on schedule (time of day) or according to the sun’s position (sunrise/sunset).
-- **Manual control**: Via button, IR remote, or Home Assistant.
-- **Power saving**: ESP32-C3 deep sleep with wake-up by timer or button.
-- **Safety**: Motor overheat and timeout protection.
+Main features:
+- **Automatic control**: The blind is controlled by schedule (time input) or by sun position (sunrise/sunset), always maintaining the desired state.
+- **Manual control**: Via button, IR remote, Home Assistant, Yandex (Alice), Web page.
+- **Energy saving**: Deep sleep of ESP32-C3 with wake-up by timer or button.
+- **Safety**: Motor overheat protection and timeouts.
 - **Monitoring**: OLED display shows status, battery, time, and wake-up reasons.
 - **Integration**: Full compatibility with Home Assistant for remote control and monitoring.
 
-The project is based on ESP32-C3, a stepper motor with A4988 driver, and various sensors. The code is written in ESPHome YAML using substitutions for flexible configuration.
+The project is based on ESP32-C3 (or any ESP32), stepper motor with A4988 driver, and various sensors. The code is written in ESPHome YAML using substitutions for flexible configuration.
 
 ---
 
 ## 🚀 Key Features
 
 ### Automation
-- **“Sun” mode**: The blind follows sunrise and sunset with configurable sun angle offset.
-- **“Time” mode**: User-defined open and close times (e.g., 07:00–18:00).
-- **Auto/Manual mode**: Enable or disable automatic control.
-- **Deep sleep**: The ESP32 sleeps until the next event, saving battery.
+- **"Sun" mode**: The blind works according to sunrise and sunset (with adjustable sun angle offset).
+- **"Time" mode**: Set opening and closing times (e.g., 07:00–18:00).
+- **Auto/Manual mode**: Enable/disable automatic control. In manual mode, controls the blind only on timer wake-up.
+- **Deep sleep**: ESP32 sleeps until the next event, saving battery.
+- **Auto-correction**: Ability to correct blind position by reed switch on opening.
 
 ### Control
-- **Physical button**: Multifunctional (open/close, stop, sleep, info, learning).
-- **IR remote (LG)**: Commands UP, DOWN, STOP.
-- **Home Assistant**: Full control via MQTT/API (open, close, position).
-- **Learning**: Calibration of blind endpoints (open/closed).
+- **Physical button**: Multifunctional (open/close, stop, sleep, help, learning).
+- **IR remote**: Programmable for any code on any IR remote.
+- **Home Assistant**: Full control via API (open, close, position).
+- **Yandex (Alice)**: When connected via Home Assistant (open, close, position).
+- **Web page**: Remote control from anywhere via any browser at the device's IP address.
+- **Learning**: Calibration of blind end points (open/closed).
 
 ### Safety and Monitoring
-- **Fuse**: Current monitoring (INA226) and timeouts to prevent overheating.
-- **Reed switch**: Position sensor (for stopping when closed).
+- **Protector**: Current monitoring (INA226) and timeouts to prevent overheating.
+- **Reed switch**: Position sensor (for stopping on closing).
 - **RTC DS1307**: Accurate time even without Wi-Fi.
-- **OLED display**: Status info, battery level, sleep timer, and wake-up reasons.
-- **Boot log**: History of wake-up causes (timer, button, etc.).
+- **OLED display**: Information on status, battery, time to sleep, and wake-up reasons.
+- **Boot log**: History of wake-up reasons (timer, button, etc.).
+- **ESP info**: Information about ESP (reboot reason, free memory, etc.).
 
-### Power Saving
-- Battery powered (18650) with voltage monitoring.
-- Deep sleep with wake-up by timer or GPIO.
-- Wi-Fi enabled only when needed.
+### Energy Saving
+- Battery power (18650) with voltage monitoring.
+- Deep Sleep with wake-up by timer or GPIO.
+- Wi-Fi turns on only when necessary.
 
 ---
 
 ## 🛠 Components and Hardware
 
 ### Main Components
-- **Microcontroller**: ESP32-C3 (low power, Wi-Fi/BLE).
-- **Stepper motor**: 28BYJ-48 with A4988 driver (direction, step, sleep control).
-- **Display**: OLED SSD1306 I2C (128x64 for status display).
+- **Microcontroller**: ESP32-C3 (low power consumption, Wi-Fi/BLE).
+- **Stepper motor**: 28BYJ-48 5V in bipolar connection mode.
+- **Charge controller**: TP4056 charge controller with protection.
+- **Motor driver**: A4988 driver (direction, step, sleep control).
+- **Display**: OLED SSD1306 I2C (128x64, for status display).
 - **Sensors**:
-  - INA226: Motor current and voltage monitoring.
-  - ADC: Battery voltage measurement.
-  - DS1307: RTC for accurate timekeeping.
-  - Reed switch: Blind position detection.
-- **Power**: 18650 battery (3.7V) with DC-DC converter.
-- **Optional**: IR receiver, button, IR remote.
+  - INA226 (INA219): Motor current and voltage monitoring.
+  - ADC: Battery voltage.
+  - DS1307: RTC for autonomous time. Corrected by time from Home Assistant.
+- **Power**: 18650 battery (3.7V) with DC-DC converter and USB-C charging capability.
+- **DC-DC 3.7->8-12V**: Boost voltage regulator.
+- **DC-DC 3.3V**: Buck linear voltage regulator HT7333.
+- **MOSFETs**: MOSFETs with appropriate circuitry.
+- **Solar panel**: 5.5-6V solar panel with 10mA charging current.
+- **Additional**: IR receiver, button, IR remote (optional).
 
 ### Wiring Diagram (ESP32-C3 GPIO)
-- GPIO0: Control button (pull-up, inverted).
-- GPIO1: ADC for battery voltage.
-- GPIO3: Step pin for A4988.
-- GPIO4: Direction pin for A4988 (inverted).
-- GPIO2: Sleep pin for A4988.
+- GPIO0: Control button (with pull-up, inverted).
+- GPIO1: ADC for battery.
+- GPIO3: Step (step) for A4988.
+- GPIO4: Direction (dir) for A4988 (inverted).
+- GPIO2: Sleep (sleep) for A4988.
 - GPIO5: Motor power (GPIO switch).
 - GPIO6: Reed switch (pull-up, inverted).
 - GPIO7: Display power (GPIO switch).
@@ -74,120 +89,131 @@ The project is based on ESP32-C3, a stepper motor with A4988 driver, and various
 - GPIO10: SCL I2C.
 
 ### Software Dependencies
-- **ESPHome**: Version 2024+ (supports deep sleep and sensors).
+- **ESPHome**: Version 2024+ (deep sleep and sensor support).
 - **Home Assistant**: For integration (MQTT, API).
-- **Font**: Arial.ttf (for display, uploaded to ESPHome).
+- **Font**: Arial.ttf (for display, loaded in ESPHome).
 
 ---
 
 ## 📋 Installation and Setup
 
-### 1. Prepare Hardware
-- Assemble the circuit according to the GPIO wiring above using the schematic.
-- Install ESPHome firmware on ESP32-C3 (via USB or OTA).
-- Connect the battery and test power supply.
+### 1. Hardware Preparation
+- Assemble the circuit according to the GPIO above, using the electrical schematic.
+- Install ESPHome on ESP32-C3 (via USB or OTA).
+- Connect the battery and test the power.
 
-### 2. Clone Repository
+### 2. Repository Cloning
 ```bash
 git clone https://github.com/your-username/roller-blind.git
 cd roller-blind
 ```
 
-### 3. Configure ESPHome
-- Open `roller-blind.yaml` in VS Code with ESPHome extension.
-- Edit substitutions at the top of the file to match your setup:
+### 3. ESPHome Configuration
+- Open the `roller-blind.yaml` file in VS Code with ESPHome extension or in ESPHome Builder.
+- Change substitutions at the beginning of the file to your configuration:
   ```yaml
   substitutions:
-    name: roller-blind2
-    friendly_name: roller-blind2
-    friendly_name_short: roller_blind2
-    version: "04.10.2025"
+    name: smart-roller-blind
+    friendly_name: Smart Roller Blind
+    friendly_name_short: smart_roller_blind
+    version: "05.10.2025"
     device_ip: 192.168.x.x  # Your IP
     # ... other parameters (GPIO, speeds, etc.)
   ```
-- Upload the `arial.ttf` font file to the project folder (or specify path).
+- Load the necessary include folders (and specify the path) or create your own basic entries for the ESPHome project.
+- Load the font `arial.ttf` into the project folder (and specify the path).
 
-### 4. Integrate with Home Assistant
-- Add device via MQTT discovery in Home Assistant.
+### 4. Home Assistant Integration
+- Add the device to HA via MQTT discovery.
 - Use entities: cover, sensors, switches, buttons.
-- Example automation: “Open blind at sunrise.”
+- Example automation: "Open the blind at dawn".
 
-### 5. Blind Learning Mode
-- Enable learning mode by long-pressing the button for 6–10 seconds.
-- Follow on-screen instructions: close the blind, press button at bottom position, then open and press at top position.
+### 5. Blind Learning
+- Enable learning mode (long press button 6-10 sec).
+- Follow display instructions: close the blind, press button at bottom point, then open and press at top.
 
 ---
 
 ## 🎮 Usage
 
-### Button Control (GPIO0)
-- **1 press**: Open/Close (toggle direction).
-- **2 presses**: Sleep mode on/off.
-- **3 presses**: Info screen.
+### Control via Button (GPIO0)
+- **1 press**: Open/Close/Stop (direction toggle).
+- **2 presses**: Enable/Disable sleep mode.
+- **3 presses**: Help (info screen).
 - **4 presses**: Learning screen.
-- **5 presses**: Wi-Fi on/off.
+- **5 presses**: Enable/Disable Wi-Fi.
 - **6 presses**: Switch display pages.
-- **Long press (3–5 sec) on error screen**: Restart.
-- **Long press (6–10 sec)**: Enter learning mode.
+- **Long press (3-5 sec) on main screen**: Toggle auto/manual mode.
+- **Long press (3-5 sec) on alarm screen**: Reboot.
+- **Long press (6-10 sec)**: Enter learning mode.
 
-### IR Remote Control
-- **xxx**: Train via logs.
+### Control via IR Remote
+- **xxx**: Learn from logs.
+- **Disable button**: Disable IR sensor if not used, saving up to 50% in sleep mode.
 
-### Display Pages
+### Display (Pages)
 - **main_page**: Main status (time, position, battery, sleep).
 - **learning**: Learning instructions.
 - **info**: Button help.
 - **start_learning/open_setting/close_setting**: Learning steps.
 - **finish**: Learning success.
 - **sleeping**: Sleep screen.
-- **safety_alarm**: Error (overheat/timeout).
+- **safety_alarm**: Alarm (overheat/timeout).
 
-### Home Assistant Settings
-- **Sunrise/Sunset Offset**: Adjust sun angle offset.
+### Settings in Home Assistant
+- **Sunrise/Sunset Offset**: Sun angle correction.
 - **Brightness**: Display brightness.
 - **Stepper Speed**: Motor speed.
-- **Max Current/Timeout**: Safety settings.
-- **Blind Position**: Manual position control.
+- **Max Current/Timeout**: Safety.
+- **COVER**: Manual position setting.
+- **Other settings**: Numerous other settings.
 
 ---
 
 ## 🔧 Advanced Configuration
 
 ### Substitutions
-Configure parameters at the top of YAML:
-- `pin_a/pin_b/pin_c`: GPIOs for A4988.
-- `max_speed/run_duration`: Motor speed and run time.
+Configure parameters at the beginning of YAML:
+- `pin_a/pin_b/pin_c`: GPIO for A4988.
+- `max_speed/run_duration`: Speed and runtime.
 - `device_ip`: Device IP address.
 
 ### Global Variables
-- `endstop`: Endpoint calibration (set during learning).
+- `endstop`: End point (calibrated during learning).
 - `wifi_enabled`: Wi-Fi control.
-- `sun_time`: Sun/time mode toggle.
+- `sun_time`: Sun/time mode.
+- Other variables.
 
 ### Logs and Debugging
-- Enable `logger: debug` for detailed logs.
-- Monitor via ESPHome logs or Home Assistant.
+- Enable `logger: debug` for logs.
+- Monitor via ESPHome logs or HA.
 
-### Power Saving
-- Deep sleep lasts until next event (sunrise/sunset or user time).
+### Energy Saving
+- Deep Sleep lasts until the next event (sunrise/sunset or custom time). Without recharging (solar panel or USB-C), operates up to 2 months.
 
 ---
 
 ## 📊 Screenshots and Videos
 
-*(Add display screenshots, HA dashboard images, or demo videos here)*
+*(Add screenshots of the display, HA dashboard, or demo videos here)*
 
-- [Display in action](screenshot1.png)
-- [Home Assistant integration](screenshot2.png)
+- [Firmware yaml file](smart-roller-blind.yaml)
+- [Appearance](roller-blind-img/roller-blind-v2_1.jpg)
+- [Appearance](roller-blind-img/roller-blind-v2_1.jpg)
+- [Window view](roller-blind-img/window.jpg)
+- [Wiring diagram](roller-blind-img/smart-roller-blind-shema.jpg)
+- [Video#1 YOUTUBE](https://youtu.be/TDQovWRaWWA)
+- [Video#2 YOUTUBE](https://youtu.be/KZsbmizrDjA)
+- [3D print files](roller-blind-3d)
 
 ---
 
-## 🐛 Troubleshooting
+## 🐛 Possible Issues
 
-- **Blind doesn’t move**: Check motor power (GPIO5) and calibration.
+- **Blind doesn't move**: Check motor power (GPIO5) and calibration.
 - **No time**: Sync RTC via HA or Wi-Fi.
-- **Error triggered**: Check current (INA226) and timeouts.
-- **Wi-Fi won’t connect**: Verify `wifi.yaml` settings.
+- **Alarm**: Check current (INA226) and timeouts.
+- **Wi-Fi doesn't connect**: Check `wifi.yaml` settings.
 
 For help, open an issue in the repository.
 
@@ -195,16 +221,21 @@ For help, open an issue in the repository.
 
 ## 📄 License
 
-This project is licensed under the MIT License. Use at your own risk.
+This project is distributed under the MIT license. Use at your own risk.
 
 ---
 
+## Additional Information Sources
+
+Telegram channel https://t.me/parus_smart
+
+---
 ## 🙏 Acknowledgments
 
-- ESPHome community for the excellent framework.
+- ESPHome community for the great framework.
 - Home Assistant for integration.
-- Thank you for using! If the project is useful, please ⭐ on GitHub.
+- You for using it! If the project is helpful, give it a ⭐ on GitHub.
 
 ---
 
-*Made with ❤️ by ParusSmartHome. Version: 04.10.2025*
+*Created with ❤️ ParusSmartHome. Version: 05.10.2025*
