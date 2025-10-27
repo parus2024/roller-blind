@@ -540,7 +540,7 @@ switch:
       mode:
         output: true
         pullup: true
-    restore_mode: RESTORE_DEFAULT_ON
+    restore_mode: ALWAYS_ON
   - platform: gpio
     name: Display
     icon: mdi:tablet-dashboard
@@ -551,7 +551,7 @@ switch:
       mode:
         output: true
         pullup: true
-    restore_mode: RESTORE_DEFAULT_ON
+    restore_mode: ALWAYS_ON
   - platform: template # Виртуальный выключатель отчета о движении
     name: 'Report'
     icon: mdi:chart-gantt
