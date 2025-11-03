@@ -195,7 +195,7 @@ cd roller-blind
 
 ## 📊 Скриншоты и Видео
 
-- [yaml файл прошивки](smart-roller-blind.yaml)
+- [yaml файл прошивки](parus-roller-blind.yaml)
 - [внешний вид](roller-blind-img/roller-blind-v2_1.jpg)
 - [внешний вид](roller-blind-img/roller-blind-v2_1.jpg)
 - [Вид на окне](roller-blind-img/window.jpg)
