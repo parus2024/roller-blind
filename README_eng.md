@@ -10,7 +10,7 @@
 
 ## 🌟 Project Description
 
-**Smart-Roller-Blind** is an intelligent roller blind (curtain) control system built on ESPHome and integrated with Home Assistant. The project allows automatic and manual control of the blind depending on the time of day, sun position, or user settings, with support for energy-saving deep sleep mode. Perfect for smart homes, providing comfort, safety, and energy efficiency. Without recharging, it provides autonomous operation for 1-2 months with daily use. By replacing the stepper motor with a driver with more powerful options, it can work with heavy curtains.
+**Parus-Roller-Blind** is an intelligent roller blind (curtain) control system built on ESPHome and integrated with Home Assistant. The project allows automatic and manual control of the blind depending on the time of day, sun position, or user settings, with support for energy-saving deep sleep mode. Perfect for smart homes, providing comfort, safety, and energy efficiency. Without recharging, it provides autonomous operation for 1-2 months with daily use. By replacing the stepper motor with a driver with more powerful options, it can work with heavy curtains.
 
 Main features:
 - **Automatic control**: The blind is controlled by schedule (time input) or by sun position (sunrise/sunset), always maintaining the desired state.
@@ -104,7 +104,7 @@ The project is based on ESP32-C3 (or any ESP32), stepper motor with A4988 driver
 
 ### 2. Repository Cloning
 ```bash
-git clone https://github.com/your-username/roller-blind.git
+git clone https://github.com/parus2024/roller-blind.git
 cd roller-blind
 ```
 
@@ -113,9 +113,9 @@ cd roller-blind
 - Change substitutions at the beginning of the file to your configuration:
   ```yaml
   substitutions:
-    name: smart-roller-blind
-    friendly_name: Smart Roller Blind
-    friendly_name_short: smart_roller_blind
+    name: parus-roller-blind
+    friendly_name: Parus Roller Blind
+    friendly_name_short: parus_roller_blind
     version: "05.10.2025"
     device_ip: 192.168.x.x  # Your IP
     # ... other parameters (GPIO, speeds, etc.)
