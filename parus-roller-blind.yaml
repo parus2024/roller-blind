@@ -1,7 +1,7 @@
 substitutions:
-  name: smart-roller-blind
-  friendly_name: Smart Roller Blind
-  friendly_name_short: smart_roller_blind
+  name: parus-roller-blind
+  friendly_name: Parus Roller Blind
+  friendly_name_short: parus_roller_blind
   version: "05.10.2025"
   device_ip: 192.168.0.214
   reboot_timeout: 0s
