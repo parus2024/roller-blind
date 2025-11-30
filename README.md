@@ -198,6 +198,8 @@ cd roller-blind
 - [yaml файл прошивки](parus-roller-blind.yaml)
 - [внешний вид](roller-blind-img/roller-blind-v2_1.jpg)
 - [внешний вид](roller-blind-img/roller-blind-v2_1.jpg)
+- [статистика разрядки](roller-blind-img/battery_10day.png)
+- [статистика зарядки](roller-blind-img/battery_30day.png)
 - [Вид на окне](roller-blind-img/window.jpg)
 - [Схема соединений](roller-blind-img/smart-roller-blind-shema.jpg)
 - [Видео#1 YOUTUBE](https://youtu.be/TDQovWRaWWA)
@@ -212,8 +214,6 @@ cd roller-blind
 - **Нет времени**: Синхронизируйте RTC через HA или Wi-Fi.
 - **Авария**: Проверьте ток (INA226) и тайм-ауты.
 - **Wi-Fi не подключается**: Проверьте настройки `wifi.yaml`.
-
-Для помощи откройте issue в репозитории.
 
 ---
 
