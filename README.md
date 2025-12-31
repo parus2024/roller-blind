@@ -204,6 +204,8 @@ cd roller-blind
 - [Схема соединений](roller-blind-img/smart-roller-blind-shema.jpg)
 - [Видео#1 YOUTUBE](https://youtu.be/TDQovWRaWWA)
 - [Видео#2 YOUTUBE](https://youtu.be/KZsbmizrDjA)
+- [Назначение геркона YOUTUBE](https://youtu.be/iwBEjguX0Tw)
+- [Цепочка YOUTUBE](https://youtube.com/shorts/eKvNpj7ydDw)
 - [Файлы для печати](roller-blind-3d)
 
 ---
